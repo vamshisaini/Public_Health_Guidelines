@@ -1,0 +1,30 @@
+
+# LangChain core and integrations
+langchain
+langchain-community
+langchain-core
+langchain-text-splitters
+langchain-huggingface
+langchain-chroma
+
+# Embeddings and vector database
+sentence-transformers
+chromadb
+
+# HTML webpage loading
+beautifulsoup4
+requests
+
+# LLM for answer generation
+langchain-google-genai
+
+# Streamlit interface
+streamlit
+
+# Evaluation and monitoring
+pandas
+langsmith
+
+# Environment variables
+python-dotenv
+
