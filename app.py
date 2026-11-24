@@ -52,7 +52,25 @@ if not os.getenv("GOOGLE_API_KEY"):
     st.error("GOOGLE_API_KEY is missing. Please check your .env file.")
     st.stop()
 
+# --------------------------------------------------
+# Gemini model selection
+# --------------------------------------------------
 
+st.sidebar.subheader("Gemini Model")
+
+MODEL_OPTIONS = {
+    "Gemini 3.6 Flash": "gemini-3.6-flash",
+    "Gemini 3.7 Flash": "gemini-3.7-flash",
+    "Gemini 3.8 Flash": "gemini-3.8-flash"
+}
+
+selected_model = st.sidebar.selectbox(
+    "Choose Gemini model",
+    list(MODEL_OPTIONS.keys()),
+    index=2
+)
+
+model_name = MODEL_OPTIONS[selected_model]
 
 
 
@@ -61,7 +79,7 @@ if not os.getenv("GOOGLE_API_KEY"):
 # --------------------------------------------------
 
 @st.cache_resource
-def load_resources():
+def load_resources(model_name):
 
     # 1. Initialize embedding model
     embedding_model = HuggingFaceEmbeddings(
@@ -81,7 +99,8 @@ def load_resources():
     # 3. Check whether documents are already indexed
     if vectorstore._collection.count() == 0:
 
-        st.info("Initializing the public-health knowledge base...")
+        status = st.empty()
+        status.info("Initializing the public-health knowledge base...")
 
         # Official source webpages
         sources = [
@@ -168,14 +187,14 @@ def load_resources():
                 "Chroma database initialization failed."
             )
 
-        st.success(
-            f"Knowledge base created with {len(chunks)} chunks."
+        status.success(
+            f"Knowledge base ready! {len(chunks)} chunks indexed."
         )
 
     return (
         vectorstore,
         ChatGoogleGenerativeAI(
-            model="gemini-3.7-flash",
+            model=model_name,
             temperature=0.1
         ),
         CrossEncoder(
@@ -186,7 +205,7 @@ def load_resources():
 
 
 try:
-    vectorstore, llm, reranker = load_resources()
+    vectorstore, llm, reranker = load_resources(model_name)
 except Exception as e:
     st.error(
         "Could not load the application resources. "
