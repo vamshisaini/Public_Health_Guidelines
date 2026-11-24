@@ -14,12 +14,23 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from sentence_transformers import CrossEncoder
+from langchain_community.document_loaders import WebBaseLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # --------------------------------------------------
 # 1. Configuration
 # --------------------------------------------------
 
-load_dotenv(override=True)
+load_dotenv(override=False)
+# Load Streamlit Cloud secrets into environment variables
+if "GOOGLE_API_KEY" in st.secrets:
+    os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+
+if "LANGSMITH_API_KEY" in st.secrets:
+    os.environ["LANGSMITH_API_KEY"] = st.secrets["LANGSMITH_API_KEY"]
+
+if "LANGSMITH_TRACING" in st.secrets:
+    os.environ["LANGSMITH_TRACING"] = st.secrets["LANGSMITH_TRACING"]
 
 os.environ["LANGSMITH_PROJECT"] = "Public-Health-RAG"
 
@@ -42,38 +53,136 @@ if not os.getenv("GOOGLE_API_KEY"):
     st.stop()
 
 
+
+
+
 # --------------------------------------------------
-# 2. Load existing models and vector database
+# 2. Load models and initialize Chroma database
 # --------------------------------------------------
 
 @st.cache_resource
 def load_resources():
+
+    # 1. Initialize embedding model
     embedding_model = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
+    persist_directory = "./vectorstore/chroma_db"
+    collection_name = "public_health_guidelines"
+
+    # 2. Open existing Chroma database
     vectorstore = Chroma(
-        collection_name="public_health_guidelines",
-        persist_directory="./vectorstore/chroma_db",
+        collection_name=collection_name,
+        persist_directory=persist_directory,
         embedding_function=embedding_model
     )
 
+    # 3. Check whether documents are already indexed
     if vectorstore._collection.count() == 0:
-        raise RuntimeError(
-            "The Chroma database is empty. Run the notebook "
-            "through the vector database creation stage first."
+
+        st.info("Initializing the public-health knowledge base...")
+
+        # Official source webpages
+        sources = [
+            {
+                "url": "https://www.who.int/news-room/questions-and-answers/item/how-do-i-protect-my-health-in-a-flood/",
+                "title": "How to protect your health in a flood",
+                "organization": "WHO",
+                "region": "Global",
+                "topic": "Floods"
+            },
+            {
+                "url": "https://www.who.int/europe/emergencies/situations/climate-crisis-extreme-weather/public-health-advice-on-protecting-your-health-before-during-and-after-floods",
+                "title": "Public health advice before, during and after floods",
+                "organization": "WHO Europe",
+                "region": "European Region",
+                "topic": "Floods"
+            },
+            {
+                "url": "https://www.who.int/india/heat-waves",
+                "title": "Heat Waves",
+                "organization": "WHO India",
+                "region": "India",
+                "topic": "Heatwaves"
+            },
+            {
+                "url": "https://www.who.int/en/news-room/fact-sheets/detail/climate-change-heat-and-health",
+                "title": "Climate change: Heat and health",
+                "organization": "WHO",
+                "region": "Global",
+                "topic": "Heat and Health"
+            },
+            {
+                "url": "https://ncdc.mohfw.gov.in/includes/About/CentresAndDivision/leptospirosis.php",
+                "title": "Leptospirosis",
+                "organization": "NCDC India",
+                "region": "India",
+                "topic": "Infectious Diseases"
+            }
+        ]
+
+        documents = []
+
+        # 4. Load webpages and attach source metadata
+        for source in sources:
+
+            loader = WebBaseLoader(source["url"])
+            loaded_docs = loader.load()
+
+            for doc in loaded_docs:
+                doc.metadata.update({
+                    "title": source["title"],
+                    "organization": source["organization"],
+                    "region": source["region"],
+                    "topic": source["topic"],
+                    "url": source["url"]
+                })
+
+            documents.extend(loaded_docs)
+
+        if not documents:
+            raise RuntimeError(
+                "No documents could be loaded from the source webpages."
+            )
+
+        # 5. Split documents into chunks
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=800,
+            chunk_overlap=120
         )
 
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3.7-flash",
-        temperature=0.1
+        chunks = splitter.split_documents(documents)
+
+        if not chunks:
+            raise RuntimeError(
+                "Document chunking produced no chunks."
+            )
+
+        # 6. Add documents and embeddings to Chroma
+        vectorstore.add_documents(chunks)
+
+        # 7. Verify database creation
+        if vectorstore._collection.count() == 0:
+            raise RuntimeError(
+                "Chroma database initialization failed."
+            )
+
+        st.success(
+            f"Knowledge base created with {len(chunks)} chunks."
+        )
+
+    return (
+        vectorstore,
+        ChatGoogleGenerativeAI(
+            model="gemini-3.7-flash",
+            temperature=0.1
+        ),
+        CrossEncoder(
+            "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        )
     )
 
-    reranker = CrossEncoder(
-        "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    )
-
-    return vectorstore, llm, reranker
 
 
 try:
